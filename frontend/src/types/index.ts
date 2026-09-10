@@ -233,3 +233,48 @@ export interface ClinicalReasoningResponse {
   model_used?: string;
   validation_status?: string;
 }
+
+// ---- 3D Human Anatomy Explorer (MedGemma 1.5) ----
+export type AnatomyAudience = 'doctor' | 'patient' | 'caregiver';
+
+export interface AnatomySystem {
+  key: string;
+  label: string;
+  description: string;
+  evocare_domains: string[];
+}
+
+export interface AnatomyExplainRequest {
+  system?: string;
+  structure?: string;
+  question?: string;
+  audience?: AnatomyAudience;
+}
+
+export interface AnatomyRelatedEvidence {
+  type: 'MEDICATION' | 'CAREGIVER' | 'MEMORY' | string;
+  label: string;
+  evidence_code?: string | null;
+}
+
+export interface AnatomyExplainResponse {
+  patient_code: string;
+  patient_name: string;
+  system: string;
+  system_label: string;
+  structure?: string | null;
+  audience: AnatomyAudience;
+  question?: string | null;
+  explanation: string;
+  model_used: string;
+  tier: 'medgemma' | 'gemini' | 'groq' | 'offline' | string;
+  from_cache: boolean;
+  fallback_notice?: string | null;
+  related_evidence: AnatomyRelatedEvidence[];
+  disclaimer: string;
+}
+
+export interface AnatomyLLMStatus {
+  medgemma: { configured: boolean; model: string; base_url: string | null; cooling_down: boolean };
+  active_tier: string;
+}

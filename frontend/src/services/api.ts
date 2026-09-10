@@ -1,4 +1,4 @@
-import { DashboardResponse, MemoryHistoryItem, ClinicalReasoningResponse } from '../types';
+import { DashboardResponse, MemoryHistoryItem, ClinicalReasoningResponse, AnatomySystem, AnatomyExplainRequest, AnatomyExplainResponse, AnatomyLLMStatus } from '../types';
 import { authService } from './auth';
 
 const API_BASE = '/api';
@@ -139,6 +139,39 @@ export const apiService = {
     } catch (err) {
       if (err instanceof ApiError) throw err;
       throw new ApiError(500, 'Failed to connect to Personal Health Companion.');
+    }
+  },
+
+  // ---- 3D Human Anatomy Explorer (MedGemma 1.5) ----
+  async getAnatomySystems(): Promise<AnatomySystem[]> {
+    const res = await fetch(`${API_BASE}/anatomy/systems`, { headers: authHeaders() });
+    if (!res.ok) throw new ApiError(res.status, 'Failed to load anatomy taxonomy');
+    return await res.json();
+  },
+
+  async getAnatomyStatus(): Promise<AnatomyLLMStatus> {
+    const res = await fetch(`${API_BASE}/anatomy/status`, { headers: authHeaders() });
+    if (res.status === 401) handleUnauthorized();
+    if (!res.ok) throw new ApiError(res.status, 'Failed to load anatomy model status');
+    return await res.json();
+  },
+
+  async explainAnatomy(patientId: string, body: AnatomyExplainRequest): Promise<AnatomyExplainResponse> {
+    try {
+      const res = await fetch(`${API_BASE}/patients/${patientId}/anatomy/explain`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(body),
+      });
+      if (res.status === 401) handleUnauthorized();
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new ApiError(res.status, errData.detail || 'Anatomy explanation failed');
+      }
+      return await res.json();
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(500, 'Failed to reach the anatomy explainer service.');
     }
   },
 

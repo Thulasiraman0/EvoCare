@@ -41,6 +41,18 @@ class Settings:
 
     LLM_ENABLED: bool = os.getenv("LLM_ENABLED", "true").lower() in ("true", "1")
 
+    # MedGemma 1.5 (google/medgemma-1.5-4b-it) — medical-domain LLM used for the
+    # 3D Human Anatomy explainer. Served through any OpenAI-compatible endpoint:
+    #   - vLLM:    vllm serve google/medgemma-1.5-4b-it        -> http://localhost:8001/v1
+    #   - Ollama:  ollama run hf.co/unsloth/medgemma-1.5-4b-it-GGUF -> http://localhost:11434/v1
+    #   - HF Inference Router: https://router.huggingface.co/v1 (MEDGEMMA_API_KEY = HF token)
+    MEDGEMMA_BASE_URL: str = os.getenv("MEDGEMMA_BASE_URL", "").strip().rstrip("/")
+    MEDGEMMA_API_KEY: str = os.getenv("MEDGEMMA_API_KEY", os.getenv("HF_TOKEN", "")).strip()
+    MEDGEMMA_MODEL: str = os.getenv("MEDGEMMA_MODEL", "google/medgemma-1.5-4b-it").strip()
+    MEDGEMMA_TIMEOUT_SECONDS: int = int(os.getenv("MEDGEMMA_TIMEOUT_SECONDS", "60"))
+    # When true, MedGemma is also tried first for doctor clinical reasoning (before Gemini/Groq)
+    MEDGEMMA_PRIMARY_FOR_REASONING: bool = os.getenv("MEDGEMMA_PRIMARY_FOR_REASONING", "false").lower() in ("true", "1")
+
     # Phase 8 Security & Authentication Settings
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "evocare-dev-jwt-secret-key-32bytes-long-2026!!")
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")

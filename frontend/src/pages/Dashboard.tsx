@@ -8,13 +8,14 @@ import { PatientCompanionTab } from '../components/patient/PatientCompanionTab';
 import { CaregiverNotesTab } from '../components/caregiver/CaregiverNotesTab';
 import { AdminUserManagement } from '../components/admin/AdminUserManagement';
 import { DoctorPatientAccessGate } from '../components/doctor/DoctorPatientAccessGate';
+import { HumanAnatomyExplorer } from '../components/anatomy/HumanAnatomyExplorer';
 import { WhyModal } from '../components/evidence/WhyModal';
 import { EvidenceDrawer } from '../components/evidence/EvidenceDrawer';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorMessage } from '../components/common/ErrorMessage';
 import { ThemeToggle } from '../components/common/ThemeToggle';
 import { RecentChangeItem, EvidenceDetailItem } from '../types';
-import { ShieldCheck, MessageSquare, ClipboardList, PenSquare } from 'lucide-react';
+import { ShieldCheck, MessageSquare, ClipboardList, PenSquare, Scan, HeartHandshake, NotebookPen } from 'lucide-react';
 import { authService, AuthUser, AuthorizedPatient } from '../services/auth';
 
 interface DashboardProps {
@@ -22,10 +23,12 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-type TabType = 'assistant' | 'records' | 'entry';
+type TabType = 'assistant' | 'records' | 'entry' | 'anatomy';
+type SimpleViewType = 'main' | 'anatomy';
 
 export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
   const [activeTab, setActiveTab] = useState<TabType>('assistant');
+  const [simpleView, setSimpleView] = useState<SimpleViewType>('main');
   const [authorizedPatients, setAuthorizedPatients] = useState<AuthorizedPatient[]>([]);
   const [selectedPatientCode, setSelectedPatientCode] = useState<string>('P001');
   const [verifiedPatientCodes, setVerifiedPatientCodes] = useState<Set<string>>(() => {
@@ -105,6 +108,39 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
         linked_claims: [],
       });
     }
+  };
+
+  /** Two-button sub navigation used on the Patient and Caregiver portals. */
+  const renderSimpleSubNav = (mainLabel: string, mainIcon: React.ReactNode) => {
+    const btn = (key: SimpleViewType, label: string, icon: React.ReactNode) => {
+      const active = simpleView === key;
+      return (
+        <button
+          key={key}
+          onClick={() => setSimpleView(key)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 18px', borderRadius: '8px', border: 'none',
+            backgroundColor: active ? 'var(--color-accent)' : 'transparent',
+            color: active ? '#ffffff' : 'var(--color-text-secondary)',
+            fontWeight: 700, fontSize: '13px', cursor: 'pointer', transition: 'all 0.15s ease-in-out',
+            boxShadow: active ? '0 2px 4px rgba(13, 110, 100, 0.25)' : 'none',
+          }}
+        >
+          {icon}<span>{label}</span>
+        </button>
+      );
+    };
+    return (
+      <div style={{ backgroundColor: 'var(--color-surface)', borderBottom: '1px solid var(--color-border)', padding: '8px 24px', zIndex: 30 }}>
+        <div style={{ maxWidth: '1440px', margin: '0 auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {btn('main', mainLabel, mainIcon)}
+          {btn('anatomy', '3D Human Anatomy', <Scan size={16} />)}
+          <span style={{ marginLeft: 'auto', fontSize: '10px', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'var(--color-accent-soft)', color: 'var(--color-accent-dark)', fontWeight: 700 }}>
+            MedGemma 1.5
+          </span>
+        </div>
+      </div>
+    );
   };
 
   if (loading) {
@@ -195,8 +231,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
           onSelectPatient={setSelectedPatientCode}
           onLogout={onLogout}
         />
+        {renderSimpleSubNav('My Health Companion', <HeartHandshake size={16} />)}
         <main style={{ flex: 1 }}>
-          <PatientCompanionTab data={data} user={user} />
+          {simpleView === 'anatomy' ? (
+            <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '20px 24px 40px 24px', width: '100%', boxSizing: 'border-box' }}>
+              <HumanAnatomyExplorer data={data} audience="patient" />
+            </div>
+          ) : (
+            <PatientCompanionTab data={data} user={user} />
+          )}
         </main>
       </div>
     );
@@ -214,8 +257,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
           onSelectPatient={setSelectedPatientCode}
           onLogout={onLogout}
         />
+        {renderSimpleSubNav('Caregiver Notes', <NotebookPen size={16} />)}
         <main style={{ flex: 1 }}>
-          <CaregiverNotesTab data={data} user={user} onObservationSaved={refetch} />
+          {simpleView === 'anatomy' ? (
+            <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '20px 24px 40px 24px', width: '100%', boxSizing: 'border-box' }}>
+              <HumanAnatomyExplorer data={data} audience="caregiver" />
+            </div>
+          ) : (
+            <CaregiverNotesTab data={data} user={user} onObservationSaved={refetch} />
+          )}
         </main>
       </div>
     );
@@ -374,6 +424,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
                 Markdown Export
               </span>
             </button>
+
+            {/* Tab 4: 3D Human Anatomy (MedGemma 1.5) */}
+            <button
+              onClick={() => setActiveTab('anatomy')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 18px',
+                borderRadius: '8px',
+                border: 'none',
+                backgroundColor: activeTab === 'anatomy' ? 'var(--color-accent)' : 'transparent',
+                color: activeTab === 'anatomy' ? '#ffffff' : 'var(--color-text-secondary)',
+                fontWeight: 700,
+                fontSize: '13px',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease-in-out',
+                boxShadow: activeTab === 'anatomy' ? '0 2px 4px rgba(13, 110, 100, 0.25)' : 'none',
+              }}
+            >
+              <Scan size={16} />
+              <span>3D Human Anatomy</span>
+              <span
+                style={{
+                  fontSize: '10px',
+                  padding: '2px 6px',
+                  borderRadius: '10px',
+                  backgroundColor: activeTab === 'anatomy' ? 'rgba(255, 255, 255, 0.25)' : 'var(--color-plum-soft)',
+                  color: activeTab === 'anatomy' ? '#ffffff' : 'var(--color-plum)',
+                }}
+              >
+                MedGemma 1.5
+              </span>
+            </button>
           </div>
 
           <div style={{ fontSize: '12px', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -404,6 +488,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
               onOpenWhy={(change) => setSelectedWhyChange(change)}
               onSelectEvidence={handleOpenEvidence}
             />
+          )}
+
+          {activeTab === 'anatomy' && (
+            <HumanAnatomyExplorer data={data} audience="doctor" onSelectEvidence={handleOpenEvidence} />
           )}
 
           {activeTab === 'entry' && (

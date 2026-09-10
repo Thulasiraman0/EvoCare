@@ -4,6 +4,8 @@ from app.services.llm.provider import LLMProvider, LLMResult, MockLLMProvider
 from app.services.llm.schemas import LLMStatus, ProcessingMethod
 from app.services.llm.gemini_provider import GeminiProvider
 from app.services.llm.groq_provider import GroqProvider
+from app.services.llm.medgemma_provider import MedGemmaProvider, offline_anatomy_explanation
+from app.core.config import settings
 
 import hashlib
 import time
@@ -28,11 +30,97 @@ class ResilientLLMProvider(LLMProvider):
         self,
         gemini_provider: Optional[GeminiProvider] = None,
         groq_provider: Optional[GroqProvider] = None,
-        mock_provider: Optional[MockLLMProvider] = None
+        mock_provider: Optional[MockLLMProvider] = None,
+        medgemma_provider: Optional[MedGemmaProvider] = None,
     ):
         self.gemini = gemini_provider or GeminiProvider()
         self.groq = groq_provider or GroqProvider()
         self.mock = mock_provider or MockLLMProvider()
+        self.medgemma = medgemma_provider or MedGemmaProvider()
+
+    # ------------------------------------------------------------------
+    # 3D Human Anatomy explainer (MedGemma 1.5 first, then Gemini/Groq, then offline)
+    # ------------------------------------------------------------------
+    def explain_anatomy(
+        self,
+        system_key: str,
+        audience: str,
+        patient_context: Dict[str, Any],
+        question: Optional[str] = None,
+        structure: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from app.services.llm.medgemma_provider import build_anatomy_prompt, ANATOMY_SYSTEM_PROMPT
+
+        pcode = (patient_context.get("demographics") or patient_context.get("patient") or {}).get("patient_code", "P001")
+        cache_key = hashlib.md5(
+            f"anatomy_v1:{pcode}:{system_key}:{audience}:{structure or ''}:{(question or '').strip().lower()}".encode()
+        ).hexdigest()
+        now = time.time()
+        if cache_key in self._reasoning_cache:
+            ts, cached = self._reasoning_cache[cache_key]
+            if now - ts < self.CACHE_TTL_SECONDS and isinstance(cached, dict) and "text" in cached:
+                return {**cached, "from_cache": True}
+
+        errors = []
+
+        # Tier 0: MedGemma 1.5 (medical-domain model)
+        if self.medgemma.is_configured():
+            try:
+                text = self.medgemma.explain_anatomy(system_key, audience, patient_context, question, structure)
+                if text:
+                    res = {"text": text, "model_used": f"MedGemma 1.5 ({self.medgemma.model})", "tier": "medgemma"}
+                    self._reasoning_cache[cache_key] = (now, res)
+                    return res
+            except Exception as e:
+                errors.append(f"MedGemma: {e}")
+                logger.warning(f"MedGemma anatomy explanation failed ({e}); failing over to Gemini...")
+
+        prompt = build_anatomy_prompt(system_key, audience, patient_context, question, structure)
+
+        # Tier 1: Gemini Flash
+        if self.gemini.is_configured() and not self.gemini.is_rate_limited():
+            try:
+                from google import genai
+                from google.genai import types
+                client = genai.Client(api_key=self.gemini.api_key)
+                resp = client.models.generate_content(
+                    model=self.gemini.model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(system_instruction=ANATOMY_SYSTEM_PROMPT, temperature=0.2, max_output_tokens=900),
+                )
+                text = (resp.text or "").strip()
+                if text:
+                    res = {"text": text, "model_used": f"Google Gemini Flash ({self.gemini.model})", "tier": "gemini"}
+                    self._reasoning_cache[cache_key] = (now, res)
+                    return res
+            except Exception as e:
+                errors.append(f"Gemini: {e}")
+                logger.warning(f"Gemini anatomy explanation failed ({e}); failing over to Groq...")
+
+        # Tier 2: Groq
+        if self.groq.is_configured():
+            try:
+                from groq import Groq
+                client = Groq(api_key=self.groq.api_key)
+                raw, model_used = self.groq._call_groq_completion(client, prompt, ANATOMY_SYSTEM_PROMPT)
+                if raw:
+                    res = {"text": raw.strip(), "model_used": f"Groq ({model_used})", "tier": "groq"}
+                    self._reasoning_cache[cache_key] = (now, res)
+                    return res
+            except Exception as e:
+                errors.append(f"Groq: {e}")
+                logger.warning(f"Groq anatomy explanation failed ({e}); using offline explanation...")
+
+        # Tier 3: Offline deterministic
+        text = offline_anatomy_explanation(system_key, audience, patient_context, question, structure)
+        res = {
+            "text": text,
+            "model_used": "EvoCare Offline Anatomy Engine",
+            "tier": "offline",
+            "fallback_notice": "; ".join(errors) if errors else "No LLM endpoint configured (set MEDGEMMA_BASE_URL, GEMINI_API_KEY or GROQ_API_KEY).",
+        }
+        self._reasoning_cache[cache_key] = (now, res)
+        return res
 
     def extract_observation(self, text: str, patient_context: Optional[Dict[str, Any]] = None) -> LLMResult:
         # Tier 1: Gemini Flash
@@ -80,6 +168,20 @@ class ResilientLLMProvider(LLMProvider):
                 return res
 
         last_errors = []
+
+        # Tier 0 (opt-in): MedGemma 1.5 medical model
+        if settings.MEDGEMMA_PRIMARY_FOR_REASONING and self.medgemma.is_configured():
+            try:
+                logger.info("Attempting Tier 0 (MedGemma 1.5) for clinical reasoning...")
+                reasoning = self.medgemma.generate_clinical_reasoning(question, patient_context)
+                if reasoning and isinstance(reasoning, dict) and "considerations" in reasoning:
+                    self._reasoning_cache[cache_key] = (now, reasoning)
+                    return reasoning
+                logger.warning("Tier 0 (MedGemma) returned invalid schema; failing over to Tier 1...")
+            except Exception as e:
+                err_msg = f"MedGemma failed ({type(e).__name__}: {str(e)})"
+                logger.warning(f"{err_msg}. Failing over to Tier 1 (Gemini)...")
+                last_errors.append(err_msg)
 
         # Tier 1: Gemini Flash
         if self.gemini.is_configured():
