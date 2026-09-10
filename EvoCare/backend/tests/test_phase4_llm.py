@@ -245,8 +245,12 @@ def test_evidence_creation_and_provenance(client, db_session):
         assert cg_obs is not None
         assert cg_obs.attributes.get("extraction_method") == "LLM_ASSISTED"
 
-        # Check Audit Log
-        audit = db_session.query(AuditLog).filter(AuditLog.entity_id == str(ev.id)).first()
+        # Check Audit Log (filter by action: entity_id alone can collide with
+        # stale rows from earlier runs since ids are only unique per table)
+        audit = db_session.query(AuditLog).filter(
+            AuditLog.entity_id == str(ev.id),
+            AuditLog.action == "CAREGIVER_OBSERVATION_INGESTED",
+        ).first()
         assert audit is not None
         assert "LLM_ASSISTED" in audit.details
     finally:

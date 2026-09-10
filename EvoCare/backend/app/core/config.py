@@ -28,4 +28,11 @@ class Settings:
     AUTH_ENABLED: bool = os.getenv("AUTH_ENABLED", "true").lower() in ("true", "1")
     DEMO_MODE: bool = os.getenv("DEMO_MODE", "true").lower() in ("true", "1")
 
+    # Two-Step Authentication (Password + OTP)
+    OTP_ENABLED: bool = os.getenv("OTP_ENABLED", "true").lower() in ("true", "1")
+    OTP_LENGTH: int = int(os.getenv("OTP_LENGTH", "6"))
+    OTP_EXPIRE_SECONDS: int = int(os.getenv("OTP_EXPIRE_SECONDS", "300"))
+    OTP_MAX_ATTEMPTS: int = int(os.getenv("OTP_MAX_ATTEMPTS", "5"))
+    OTP_RESEND_COOLDOWN_SECONDS: int = int(os.getenv("OTP_RESEND_COOLDOWN_SECONDS", "30"))
+
 settings = Settings()

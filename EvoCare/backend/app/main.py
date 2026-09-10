@@ -67,7 +67,8 @@ from app.routers import (
     observations,
     clarification,
     dashboard,
-    clinical_reasoning
+    clinical_reasoning,
+    records
 )
 
 app.include_router(auth.router, prefix=settings.API_V1_STR)
@@ -84,4 +85,5 @@ app.include_router(observations.router, prefix=settings.API_V1_STR)
 app.include_router(clarification.router, prefix=settings.API_V1_STR)
 app.include_router(dashboard.router, prefix=settings.API_V1_STR)
 app.include_router(clinical_reasoning.router, prefix=settings.API_V1_STR)
+app.include_router(records.router, prefix=settings.API_V1_STR)
 

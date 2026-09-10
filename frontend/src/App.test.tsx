@@ -453,6 +453,9 @@ describe('Doctor Dashboard Frontend Unit Test Suite (21 Tests)', () => {
       if (typeof url === 'string' && url.includes('authorized-patients')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve([{ patient_code: 'P001', name: 'Meenakshi Raman', age: 78, sex: 'Female', access_role: 'ATTENDING_PHYSICIAN' }]) });
       }
+      if (typeof url === 'string' && url.includes('/records/')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }
       return Promise.resolve({ ok: true, json: () => Promise.resolve(mockDashboardData) });
     }));
     render(<App />);

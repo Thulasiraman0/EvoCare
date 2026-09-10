@@ -233,3 +233,30 @@ export interface ClinicalReasoningResponse {
   model_used?: string;
   validation_status?: string;
 }
+
+// ============================================================================
+// Doctor-authored clinical records (append-only, immutable evidence)
+// ============================================================================
+
+export type DoctorRecordType = 'consultation' | 'follow_up' | 'assessment' | 'historical_note';
+
+export interface DoctorRecordItem {
+  id: number;
+  patient_id: number;
+  evidence_code: string;
+  record_type: string;
+  content: string;
+  doctor_id: string;
+  doctor_name?: string | null;
+  observed_at: string;
+  created_at: string;
+  source_type: string;
+  status: string;
+}
+
+export interface DoctorRecordCreatePayload {
+  record_type: DoctorRecordType;
+  content: string;
+  observed_at?: string | null;
+  doctor_name?: string | null;
+}

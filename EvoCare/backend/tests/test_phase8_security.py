@@ -10,11 +10,19 @@ from app.models.audit import AuditLog
 client = TestClient(app)
 
 
-# Helpers to obtain auth tokens
+# Helpers to obtain auth tokens (two-step: password + OTP)
 def get_auth_token(username: str, password: str) -> str:
     res = client.post("/api/auth/login", json={"username": username, "password": password})
-    assert res.status_code == 200, f"Login failed for {username}: {res.text}"
-    return res.json()["access_token"]
+    assert res.status_code == 200, f"Login step 1 failed for {username}: {res.text}"
+    body = res.json()
+    if body.get("otp_required"):
+        verify = client.post(
+            "/api/auth/otp/verify",
+            json={"challenge_id": body["challenge_id"], "code": body["demo_code"]},
+        )
+        assert verify.status_code == 200, f"OTP verification failed for {username}: {verify.text}"
+        return verify.json()["access_token"]
+    return body["access_token"]
 
 
 def auth_header(token: str) -> dict:

@@ -16,4 +16,5 @@ from app.models.clarification import SessionStatus, ClarificationSession, Clarif
 from app.models.memory_models import MemoryVersion, MemoryClaim, MemoryProposal
 from app.models.reasoning_session import ReasoningSession
 from app.models.security import User, UserRole, PatientAccess, AccessRole, SecurityEvent
+from app.models.otp import OTPChallenge, OTPChannel, OTPPurpose
 

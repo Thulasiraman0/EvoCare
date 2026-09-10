@@ -18,6 +18,7 @@ class AccessRole(str, enum.Enum):
     PRIMARY_CAREGIVER = "PRIMARY_CAREGIVER"
     FAMILY_CAREGIVER = "FAMILY_CAREGIVER"
     ADMINISTRATIVE = "ADMINISTRATIVE"
+    SELF = "SELF"  # the patient's own login (Patient Portal)
 
 
 class User(Base):

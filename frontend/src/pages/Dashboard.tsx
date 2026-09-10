@@ -6,6 +6,7 @@ import { PatientOverviewCard } from '../components/patient/PatientOverviewCard';
 import { RecentChangesPanel } from '../components/patient/RecentChangesPanel';
 import { ClinicalContextPanel } from '../components/clinical/ClinicalContextPanel';
 import { CaregiverObservationsPanel } from '../components/caregiver/CaregiverObservationsPanel';
+import { DoctorRecordsPanel } from '../components/records/DoctorRecordsPanel';
 import { LongitudinalMemoryPanel } from '../components/memory/LongitudinalMemoryPanel';
 import { ClinicalReasoningPanel } from '../components/reasoning/ClinicalReasoningPanel';
 import { PatientTimeline } from '../components/timeline/PatientTimeline';
@@ -120,6 +121,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
             onSelectEvidence={handleOpenEvidence}
           />
         </div>
+
+        {/* Clinical Records — append-only, doctor-authored (add record: DOCTOR only) */}
+        <DoctorRecordsPanel patientCode={data.patient.patient_code} user={user} />
 
         {/* Phase 7: Doctor-Only Clinical Reasoning Assistant */}
         <ClinicalReasoningPanel

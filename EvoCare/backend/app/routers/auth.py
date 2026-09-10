@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.core.security import (
     verify_password,
     create_access_token,
@@ -20,6 +21,7 @@ from app.models.security import User, UserRole, PatientAccess
 from app.models.patient import Patient
 from app.services.audit_service import AuditService
 from app.core.dependencies import get_current_user
+from app.services.otp_service import OTPService
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,27 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class OTPChallengeResponse(BaseModel):
+    """Step-1 response: credentials accepted, OTP dispatched to the user's destination."""
+    otp_required: bool = True
+    challenge_id: str
+    channel: str
+    masked_destination: str
+    expires_in_seconds: int
+    max_attempts: int
+    # Populated ONLY in DEMO_MODE so the demo runs without an email/SMS provider.
+    demo_code: Optional[str] = None
+
+
+class OTPVerifyRequest(BaseModel):
+    challenge_id: str = Field(..., min_length=8)
+    code: str = Field(..., min_length=4, max_length=10, description="The one-time code from email/SMS")
+
+
+class OTPResendRequest(BaseModel):
+    challenge_id: str = Field(..., min_length=8)
+
+
 class AuthorizedPatientItem(BaseModel):
     patient_code: str
     name: str
@@ -51,9 +74,40 @@ class AuthorizedPatientItem(BaseModel):
     access_role: str
 
 
-@router.post("/login", response_model=TokenResponse)
+def _issue_token_response(user: User) -> TokenResponse:
+    """Create access/refresh tokens for a fully authenticated user."""
+    role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+    token_payload = {
+        "sub": str(user.id),
+        "username": user.username,
+        "role": role_str,
+        "full_name": user.full_name
+    }
+    access_token = create_access_token(token_payload)
+    refresh_token = create_refresh_token(token_payload)
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=1800,  # 30 mins
+        user={
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": role_str,
+        },
+    )
+
+
+@router.post("/login")
 def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
-    """Authenticate user with username/password, generate tokens, and record audit log."""
+    """
+    Step 1 of authentication: verify User ID + password.
+
+    - When OTP is enabled (default): does NOT issue tokens. Returns an OTP
+      challenge; the client must complete POST /api/auth/otp/verify to get tokens.
+    - When OTP_ENABLED=false: legacy behavior — issues tokens directly.
+    """
     ip = request.client.host if request.client else "unknown"
 
     # 1. Rate Limit Check
@@ -114,23 +168,38 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
             detail="User account is deactivated. Please contact an administrator."
         )
 
-    # 3. Successful Authentication
+    # 3. Successful Credential Authentication
     reset_failed_logins(req.username)
     reset_failed_logins(ip)
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
 
     role_str = user.role.value if hasattr(user.role, 'value') else str(user.role)
-    token_payload = {
-        "sub": str(user.id),
-        "username": user.username,
-        "role": role_str,
-        "full_name": user.full_name
-    }
 
-    access_token = create_access_token(token_payload)
-    refresh_token = create_refresh_token(token_payload)
+    # 4. Two-step authentication: dispatch OTP challenge before issuing tokens
+    if settings.OTP_ENABLED:
+        challenge, demo_code = OTPService.create_challenge(db=db, user=user, ip_address=ip)
+        AuditService.log_audit_event(
+            db=db,
+            action="LOGIN_STEP1_SUCCESS",
+            user_id=user.id,
+            username=user.username,
+            role=role_str,
+            result="SUCCESS",
+            reason="Credentials verified; OTP challenge issued (step 2 pending)",
+            ip_address=ip
+        )
+        return OTPChallengeResponse(
+            challenge_id=challenge.challenge_id,
+            channel=challenge.channel.value if hasattr(challenge.channel, "value") else str(challenge.channel),
+            masked_destination=challenge.destination_masked,
+            expires_in_seconds=settings.OTP_EXPIRE_SECONDS,
+            max_attempts=challenge.max_attempts,
+            demo_code=demo_code if settings.DEMO_MODE else None,
+        )
 
+    # Legacy path (OTP disabled): issue tokens directly
+    token_response = _issue_token_response(user)
     AuditService.log_audit_event(
         db=db,
         action="LOGIN_SUCCESS",
@@ -140,18 +209,67 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         result="SUCCESS",
         ip_address=ip
     )
+    return token_response
 
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=1800,  # 30 mins
-        user={
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "full_name": user.full_name,
-            "role": role_str
-        }
+
+@router.post("/otp/verify", response_model=TokenResponse)
+def verify_otp(req: OTPVerifyRequest, request: Request, db: Session = Depends(get_db)):
+    """
+    Step 2 of authentication: verify the one-time code for a challenge.
+    On success, issues the same JWT access/refresh token pair as the legacy login.
+    """
+    ip = request.client.host if request.client else "unknown"
+
+    user, error = OTPService.verify_challenge(db, req.challenge_id, req.code, ip_address=ip)
+    if error or not user:
+        AuditService.log_audit_event(
+            db=db,
+            action="OTP_VERIFICATION_FAILURE",
+            result="DENIED",
+            reason=error or "OTP verification failed",
+            ip_address=ip
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=error or "OTP verification failed."
+        )
+
+    token_response = _issue_token_response(user)
+
+    role_str = user.role.value if hasattr(user.role, 'value') else str(user.role)
+    AuditService.log_audit_event(
+        db=db,
+        action="LOGIN_SUCCESS",
+        user_id=user.id,
+        username=user.username,
+        role=role_str,
+        result="SUCCESS",
+        reason="Two-step authentication completed (password + OTP)",
+        ip_address=ip
+    )
+    return token_response
+
+
+@router.post("/otp/resend", response_model=OTPChallengeResponse)
+def resend_otp(req: OTPResendRequest, request: Request, db: Session = Depends(get_db)):
+    """Re-issue a fresh one-time code; invalidates any previous code for the session."""
+    ip = request.client.host if request.client else "unknown"
+
+    challenge, demo_code, error = OTPService.resend_challenge(db, req.challenge_id, ip_address=ip)
+    if error or not challenge:
+        is_cooldown = bool(error and "Please wait" in error)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS if is_cooldown else status.HTTP_400_BAD_REQUEST,
+            detail=error or "Could not resend the verification code."
+        )
+
+    return OTPChallengeResponse(
+        challenge_id=challenge.challenge_id,
+        channel=challenge.channel.value if hasattr(challenge.channel, "value") else str(challenge.channel),
+        masked_destination=challenge.destination_masked,
+        expires_in_seconds=settings.OTP_EXPIRE_SECONDS,
+        max_attempts=challenge.max_attempts,
+        demo_code=demo_code if settings.DEMO_MODE else None,
     )
 
 
@@ -191,16 +309,9 @@ def refresh_token_endpoint(req: RefreshRequest, request: Request, db: Session = 
     # Invalidate old refresh token and issue new pair
     revoke_token(req.refresh_token)
 
-    role_str = user.role.value if hasattr(user.role, 'value') else str(user.role)
-    token_payload = {
-        "sub": str(user.id),
-        "username": user.username,
-        "role": role_str,
-        "full_name": user.full_name
-    }
-    new_access = create_access_token(token_payload)
-    new_refresh = create_refresh_token(token_payload)
+    new_token_response = _issue_token_response(user)
 
+    role_str = user.role.value if hasattr(user.role, 'value') else str(user.role)
     AuditService.log_audit_event(
         db=db,
         action="TOKEN_REFRESH",
@@ -211,18 +322,7 @@ def refresh_token_endpoint(req: RefreshRequest, request: Request, db: Session = 
         ip_address=ip
     )
 
-    return TokenResponse(
-        access_token=new_access,
-        refresh_token=new_refresh,
-        expires_in=1800,
-        user={
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "full_name": user.full_name,
-            "role": role_str
-        }
-    )
+    return new_token_response
 
 
 @router.post("/logout")

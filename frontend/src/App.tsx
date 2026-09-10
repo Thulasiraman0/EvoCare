@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Dashboard } from './pages/Dashboard';
 import { LoginPage } from './pages/LoginPage';
+import { PatientPortal } from './pages/PatientPortal';
+import { PlaceholderPortal } from './pages/PlaceholderPortal';
 import { authService, AuthUser } from './services/auth';
 
 export const App: React.FC = () => {
@@ -39,7 +41,20 @@ export const App: React.FC = () => {
     return <LoginPage onLoginSuccess={handleLoginSuccess} />;
   }
 
-  return <Dashboard user={user} onLogout={handleLogout} />;
+  // Role-based workspace routing
+  switch (user.role) {
+    case 'DOCTOR':
+      return <Dashboard user={user} onLogout={handleLogout} />;
+    case 'PATIENT':
+      return <PatientPortal user={user} onLogout={handleLogout} />;
+    case 'CAREGIVER':
+    case 'ADMIN':
+      // Dedicated consoles are planned for the next phase;
+      // auth + RBAC are already fully enforced for these roles.
+      return <PlaceholderPortal user={user} onLogout={handleLogout} />;
+    default:
+      return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+  }
 };
 
 export default App;

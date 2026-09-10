@@ -70,38 +70,58 @@ def run_final_verification():
         doc_records_p001 = db.query(DoctorRecord).filter(DoctorRecord.patient_id == p001.id).count()
         cg_obs_p001 = db.query(CaregiverObservation).filter(CaregiverObservation.patient_id == p001.id).count()
         ev_p001 = db.query(Evidence).filter(Evidence.patient_id == p001.id).count()
-        assert doc_records_p001 == 5, f"Expected 5 doctor records for P001, got {doc_records_p001}"
+        assert doc_records_p001 >= 5, f"Expected >= 5 doctor records for P001, got {doc_records_p001}"
         assert cg_obs_p001 >= 47, f"Expected >= 47 caregiver observations for P001, got {cg_obs_p001}"
         assert ev_p001 >= 50, f"Expected >= 50 evidence records for P001, got {ev_p001}"
         print(f"  [PASS] P001 records intact: {doc_records_p001} clinical, {cg_obs_p001} observations, {ev_p001} evidence.")
         print(f"  [PASS] P002 isolation benchmark patient active.")
 
-        # Step 2: Authentication & Token Security
-        print("\n[2/8] Testing Authentication & JWT Security...")
+        # Step 2: Authentication & Token Security (Two-Step: Password + OTP)
+        print("\n[2/8] Testing Authentication & JWT Security (Password + OTP)...")
+        import re as _re
+
+        def _two_step_login(username: str, password: str) -> dict:
+            resp = client.post("/api/auth/login", json={"username": username, "password": password})
+            assert resp.status_code == 200, f"Login step 1 failed for {username}: {resp.text}"
+            body = resp.json()
+            assert body.get("otp_required") is True, f"Expected OTP challenge for {username}"
+            assert "access_token" not in body, "Tokens must NOT be issued before OTP verification"
+            verify = client.post(
+                "/api/auth/otp/verify",
+                json={"challenge_id": body["challenge_id"], "code": body["demo_code"]},
+            )
+            assert verify.status_code == 200, f"OTP verification failed for {username}: {verify.text}"
+            return verify.json()
+
         # 2a. Doctor login
-        resp_doc = client.post("/api/auth/login", json={"username": "doctor.demo", "password": "DoctorPass123!"})
-        assert resp_doc.status_code == 200, f"Doctor login failed: {resp_doc.text}"
-        doc_token = resp_doc.json()["access_token"]
-        assert resp_doc.json()["user"]["role"] == "DOCTOR"
-        print("  [PASS] doctor.demo authenticated successfully -> JWT token granted (Role: DOCTOR)")
+        doc_body = _two_step_login("doctor.demo", "DoctorPass123!")
+        doc_token = doc_body["access_token"]
+        assert doc_body["user"]["role"] == "DOCTOR"
+        print("  [PASS] doctor.demo authenticated (password + OTP) -> JWT granted (Role: DOCTOR)")
 
         # 2b. Caregiver login
-        resp_cg = client.post("/api/auth/login", json={"username": "caregiver.demo", "password": "CaregiverPass123!"})
-        assert resp_cg.status_code == 200, f"Caregiver login failed: {resp_cg.text}"
-        cg_token = resp_cg.json()["access_token"]
-        assert resp_cg.json()["user"]["role"] == "CAREGIVER"
-        print("  [PASS] caregiver.demo authenticated successfully -> JWT token granted (Role: CAREGIVER)")
+        cg_body = _two_step_login("caregiver.demo", "CaregiverPass123!")
+        cg_token = cg_body["access_token"]
+        assert cg_body["user"]["role"] == "CAREGIVER"
+        print("  [PASS] caregiver.demo authenticated (password + OTP) -> JWT granted (Role: CAREGIVER)")
 
         # 2c. Other Doctor login
-        resp_other = client.post("/api/auth/login", json={"username": "doctor.other", "password": "DoctorPass123!"})
-        assert resp_other.status_code == 200, f"doctor.other login failed: {resp_other.text}"
-        other_doc_token = resp_other.json()["access_token"]
-        print("  [PASS] doctor.other authenticated successfully -> JWT token granted")
+        other_body = _two_step_login("doctor.other", "DoctorPass123!")
+        other_doc_token = other_body["access_token"]
+        print("  [PASS] doctor.other authenticated (password + OTP) -> JWT granted")
 
         # 2d. Invalid credentials rejection
         resp_invalid = client.post("/api/auth/login", json={"username": "doctor.demo", "password": "WrongPassword!"})
         assert resp_invalid.status_code == 401, f"Expected 401 on bad password, got {resp_invalid.status_code}"
         print("  [PASS] Invalid credentials rejected with HTTP 401 Unauthorized")
+
+        # 2e. Wrong OTP rejection (bad password step is above; here: valid creds, wrong code)
+        resp_ch = client.post("/api/auth/login", json={"username": "doctor.demo", "password": "DoctorPass123!"})
+        ch = resp_ch.json()
+        wrong_code = "000000" if ch["demo_code"] != "000000" else "111111"
+        resp_wrong_otp = client.post("/api/auth/otp/verify", json={"challenge_id": ch["challenge_id"], "code": wrong_code})
+        assert resp_wrong_otp.status_code == 401, f"Expected 401 on wrong OTP, got {resp_wrong_otp.status_code}"
+        print("  [PASS] Incorrect OTP rejected with HTTP 401 (no tokens issued)")
 
         # Step 3: Authorization Matrix & Patient Isolation
         print("\n[3/8] Verifying Authorization Matrix & Patient Isolation...")

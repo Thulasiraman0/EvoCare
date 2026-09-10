@@ -30,3 +30,15 @@ def client():
     db.close()
     return c
 
+
+@pytest.fixture(scope="session", autouse=True)
+def _seed_security_demo():
+    """Ensure demo users (incl. PATIENT role) and access grants exist before tests run.
+
+    Uses SessionLocal directly (NOT the db_session fixture) because some test
+    modules shadow db_session with a function-scoped fixture, which would
+    trigger a ScopeMismatch for this session-scoped autouse fixture.
+    """
+    from scripts.seed_security_demo import seed_security_and_p002
+    seed_security_and_p002()
+

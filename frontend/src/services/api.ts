@@ -1,4 +1,4 @@
-import { DashboardResponse, MemoryHistoryItem, ClinicalReasoningResponse } from '../types';
+import { DashboardResponse, MemoryHistoryItem, ClinicalReasoningResponse, DoctorRecordItem, DoctorRecordCreatePayload } from '../types';
 import { authService } from './auth';
 
 const API_BASE = '/api';
@@ -78,6 +78,44 @@ export const apiService = {
     } catch (err) {
       if (err instanceof ApiError) throw err;
       throw new ApiError(500, 'Failed to connect to Clinical Reasoning Assistant.');
+    }
+  },
+
+  /** List doctor-authored clinical records (append-only store). Any granted role may read. */
+  async getPatientRecords(patientId: string): Promise<DoctorRecordItem[]> {
+    try {
+      const res = await fetch(`${API_BASE}/records/patients/${patientId}/records`, {
+        headers: authHeaders(),
+      });
+      if (res.status === 401) handleUnauthorized();
+      if (!res.ok) {
+        throw new ApiError(res.status, `Failed to load clinical records (HTTP ${res.status})`);
+      }
+      return await res.json();
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(500, 'Network error loading clinical records.');
+    }
+  },
+
+  /** DOCTOR-only: append a new immutable clinical record (EV-DR-xxx). */
+  async createPatientRecord(patientId: string, payload: DoctorRecordCreatePayload): Promise<DoctorRecordItem> {
+    try {
+      const res = await fetch(`${API_BASE}/records/patients/${patientId}/records`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      });
+      if (res.status === 401) handleUnauthorized();
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const msg = errorData.detail || `Could not create record (HTTP ${res.status})`;
+        throw new ApiError(res.status, typeof msg === 'string' ? msg : JSON.stringify(msg));
+      }
+      return await res.json();
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(500, 'Network error creating clinical record.');
     }
   },
 };
